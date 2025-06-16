@@ -132,6 +132,10 @@ void handleDetection() {
 const char* ssid = "Tenda_5C30C8";
 const char* password = "op898989..";
 
+// WebSocket server details
+const char* ws_server = "pir-sensor.onrender.com";  // New server URL without https:// prefix
+const uint16_t ws_port = 443;  // Default HTTPS/WSS port
+
 // Function to connect to WiFi
 void connectToWiFi() {
   Serial.print("Connecting to WiFi");
@@ -150,10 +154,6 @@ void connectToWiFi() {
     Serial.println("\nFailed to connect to WiFi!");
   }
 }
-
-// WebSocket server details
-const char* ws_server = "192.168.0.109";
-const uint16_t ws_port = 3000;
 
 // WebSocket event callback
 void onEventsCallback(WebsocketsEvent event, String data) {
@@ -176,14 +176,13 @@ void onEventsCallback(WebsocketsEvent event, String data) {
   }
 }
 
-
 // Function to connect to WebSocket
 void connectToWebSocket() {
   if (!WiFi.isConnected()) return;
   Serial.println("Connecting to WebSocket server...");
-  client.setInsecure();
+  client.setInsecure();  // Required for SSL without certificate validation
   client.onEvent(onEventsCallback);
-  String url = String("ws://") + ws_server + ":" + String(ws_port) + "/";
+  String url = String("wss://") + ws_server + "/";  // Using secure WebSocket with wss:// prefix
   if (client.connect(url)) {
     Serial.println("[WS] Connected");
   } else {

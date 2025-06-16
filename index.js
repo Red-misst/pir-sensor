@@ -1,6 +1,7 @@
 // Simple WebSocket server for ESP8266 occupancy counter
 const express = require('express');
 const http = require('http');
+const https = require('https');
 const WebSocket = require('ws');
 const path = require('path');
 // MongoDB would be imported here in a full implementation
@@ -17,26 +18,6 @@ const PORT = process.env.PORT || 3000;
 // Serve static files from the public directory
 app.use(express.static(path.join(__dirname, 'public')));
 
-// MongoDB connection string (commented as not implemented yet)
-// const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/peopleCounter';
-
-// Connect to MongoDB (commented as not implemented yet)
-/*
-mongoose.connect(MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true })
-  .then(() => console.log('MongoDB connected'))
-  .catch(err => console.error('MongoDB connection error:', err));
-
-// Create MongoDB Schema (to be implemented)
-const EventSchema = new mongoose.Schema({
-  eventType: String,      // "entry" or "exit"
-  timestamp: Date,        // Event timestamp
-  deviceId: String,       // Device identifier
-  occupancyAfter: Number  // Total occupancy after event
-});
-
-const Event = mongoose.model('Event', EventSchema);
-*/
-
 // Store connected clients
 const clients = new Set();
 
@@ -44,31 +25,32 @@ const clients = new Set();
 wss.on('connection', (ws) => {
   console.log('Client connected');
   clients.add(ws);
-    // Message handler
+  
+  // Message handler
   ws.on('message', (message) => {
+    const messageString = message.toString();
+    
+    // Check if the message is a simple connection message
+    if (messageString === "Client Connected") {
+      console.log("Device connected and sent hello message");
+      return;
+    }
+    
+    // Try to parse as JSON for event messages
     try {
-      const data = JSON.parse(message.toString());
-      const timestamp = new Date().toISOString();
-      console.log(`[${timestamp}] Received data: ${JSON.stringify(data)}`);
+      const data = JSON.parse(messageString);
       
-      // Store event in MongoDB (commented as not implemented yet)
-      /*
-      const eventData = new Event({
-        eventType: data.event,
-        timestamp: new Date(),
-        deviceId: data.deviceId || 'default-device',
-        occupancyAfter: data.occupancy || 0
-      });
+      // Ensure we have an event and timestamp from ESP8266
+      // If timestamp is missing, we'll add it
+      const timestamp = data.timestamp ? new Date(data.timestamp).toISOString() : new Date().toISOString();
       
-      eventData.save()
-        .then(() => console.log('Event saved to MongoDB'))
-        .catch(err => console.error('Error saving to MongoDB:', err));
-      */
+      console.log(`[${timestamp}] Received event: ${data.event}, Occupancy: ${data.occupancy}`);
       
       // Broadcast the message to all connected clients
       const broadcastData = {
-        ...data,
-        timestamp
+        event: data.event,
+        timestamp: timestamp,
+        occupancy: data.occupancy || 0
       };
       
       for (const client of clients) {
@@ -78,7 +60,7 @@ wss.on('connection', (ws) => {
       }
     } catch (err) {
       console.error('Error processing message:', err);
-      console.log('Raw message:', message.toString());
+      console.log('Raw message:', messageString);
     }
   });
 
