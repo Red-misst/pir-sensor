@@ -8,6 +8,8 @@ const connectionStatus = document.getElementById('connection-status');
 const entryCountElement = document.getElementById('entry-count');
 const exitCountElement = document.getElementById('exit-count');
 const currentCountElement = document.getElementById('current-count');
+const entryDistanceElement = document.getElementById('entry-distance');
+const exitDistanceElement = document.getElementById('exit-distance');
 const eventLog = document.getElementById('event-log');
 const clearLogButton = document.getElementById('clear-log');
 
@@ -157,6 +159,14 @@ function connectWebSocket() {
             const data = JSON.parse(event.data);
             console.log('Received data:', data);
             
+            // Update distance displays
+            if (data.entryDistance !== undefined) {
+                entryDistanceElement.textContent = data.entryDistance > 0 ? `${data.entryDistance} cm` : '-- cm';
+            }
+            if (data.exitDistance !== undefined) {
+                exitDistanceElement.textContent = data.exitDistance > 0 ? `${data.exitDistance} cm` : '-- cm';
+            }
+            
             // Format timestamp for display
             const timestamp = new Date(data.timestamp);
             const timeString = timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'});
@@ -168,7 +178,7 @@ function connectWebSocket() {
                 const prevCount = currentCount;
                 currentCount = data.occupancy !== undefined ? data.occupancy : currentCount + 1;
                 updateChart(timeString, 'entry');
-                logEvent(timeString, 'Entry detected', 'entry');
+                logEvent(timeString, `Entry detected (${data.entryDistance}cm → ${data.exitDistance}cm)`, 'entry');
                 
                 // Add animation effect to the counter
                 animateValue(entryCountElement, entryCount - 1, entryCount, 300);
@@ -179,7 +189,7 @@ function connectWebSocket() {
                 // If the ESP8266 sends occupancy data, use it directly
                 currentCount = data.occupancy !== undefined ? data.occupancy : Math.max(0, currentCount - 1);
                 updateChart(timeString, 'exit');
-                logEvent(timeString, 'Exit detected', 'exit');
+                logEvent(timeString, `Exit detected (${data.exitDistance}cm → ${data.entryDistance}cm)`, 'exit');
                 
                 // Add animation effect to the counter
                 animateValue(exitCountElement, exitCount - 1, exitCount, 300);

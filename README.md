@@ -2,7 +2,14 @@
 
 ## Abstract
 
-This document presents a comprehensive technical analysis of an IoT-based people counting and automatic lighting control system designed for intelligent space management. The system utilizes ultrasonic distance sensors coupled with a directional detection algorithm to accurately count individuals entering and exiting a monitored space. The primary function is automated lighting control: lights turn on when people are present and automatically turn off when the room becomes empty, providing significant energy savings and convenience.
+This document presents a comprehensive technical analysis of an IoT-based people counting and automatic lighting control system designed for intelligent space management. The system utilizes **ultrasonic distance sensors** coupled with a directional detection algorithm to accurately count individuals entering and exiting a monitored space. The primary function is automated lighting control: lights turn on when people are present and automatically turn off when the room becomes empty, providing significant energy savings and convenience.
+
+**Key improvements with ultrasonic sensors:**
+- **Precise distance measurement** (±3mm accuracy) vs simple motion detection
+- **Better directional detection** through distance-based algorithms  
+- **Environmental stability** - unaffected by temperature, lighting, or air currents
+- **Stationary object detection** - works even when people aren't moving
+- **Configurable detection zones** - adjustable thresholds for different room sizes
 
 ## Table of Contents
 
@@ -43,10 +50,12 @@ The system's core functionality includes:
 5. **Data logging for usage analysis** - track room utilization patterns and energy savings
 
 The ultrasonic sensor approach provides several advantages over traditional PIR sensors:
-- More precise distance measurements for better directional detection
-- Less susceptible to temperature variations and air currents
-- Better performance in various lighting conditions
-- Ability to detect stationary objects and slow-moving individuals
+- **More precise distance measurements** for better directional detection (±3mm vs ±1m accuracy)
+- **Less susceptible to environmental factors** - unaffected by temperature variations, air currents, and lighting
+- **Better performance in various conditions** - works in complete darkness or bright light
+- **Stationary object detection** - detects people even when they're not moving
+- **Configurable detection zones** - adjustable distance thresholds for different room sizes
+- **Real-time distance feedback** - provides actual distance readings for debugging and optimization
 
 ## 2. System Architecture
 
@@ -91,7 +100,7 @@ flowchart TD
 | Component | Model/Type | Purpose | Specifications |
 |-----------|------------|---------|----------------|
 | Microcontroller | ESP8266 NodeMCU | Central processing unit | 80MHz CPU, 4MB Flash, 802.11 b/g/n WiFi |
-| Ultrasonic Sensors | HC-SR04 | Entry/exit detection | 2cm-400cm range, 15° beam angle, ±3mm accuracy |
+| Ultrasonic Sensors | HC-SR04 (2x) | Entry/exit detection | 2cm-400cm range, 15° beam angle, ±3mm accuracy |
 | LED Controller | 5mm LED/Relay Module | Room lighting control | 20mA LED or relay for AC lighting control |
 | Alert Buzzer | Piezoelectric buzzer | Vacancy notification | 3-5V operating voltage, 85dB @ 10cm |
 | Power Supply | 5V/2A adapter | System power | Stable 5V DC output, sufficient for sensor operation |
