@@ -129,8 +129,9 @@ void sendSensorMeasurements() {
                    String(",\"exitDetected\":") + (currentSensorData.exitDetected ? "true" : "false") +
                    String(",\"detectState\":\"") + 
                    (detectState == IDLE ? "IDLE" : (detectState == SAW_ENTRY ? "SAW_ENTRY" : "SAW_EXIT")) +
+                   String("\"") + // Add closing quote for detectState
                    String(",\"deviceId\":\"proximity_sensor_01\"") +
-                   String("\"}");
+                   String("}");
   
   client.send(payload);
 }

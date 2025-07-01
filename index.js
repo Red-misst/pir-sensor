@@ -473,16 +473,12 @@ startServer().catch(console.error);
 // Graceful shutdown
 process.on('SIGINT', async () => {
   console.log('Received SIGINT. Graceful shutdown...');
-  if (db) {
-    await db.close();
-  }
+ 
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   console.log('Received SIGTERM. Graceful shutdown...');
-  if (db) {
-    await db.close();
-  }
+ 
   process.exit(0);
 });
