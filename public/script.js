@@ -12,6 +12,11 @@ const entryDistanceElement = document.getElementById('entry-distance');
 const exitDistanceElement = document.getElementById('exit-distance');
 const eventLog = document.getElementById('event-log');
 const clearLogButton = document.getElementById('clear-log');
+const testSessionBtn = document.getElementById('test-session-btn');
+const resetOccupancyBtn = document.getElementById('reset-occupancy-btn');
+const testSessionText = document.getElementById('test-session-text');
+const testSessionSpinner = document.getElementById('test-session-spinner');
+const resetOccupancySpinner = document.getElementById('reset-occupancy-spinner');
 
 // Chart.js theme setup
 Chart.defaults.color = 'rgba(255, 255, 255, 0.75)';
@@ -124,7 +129,7 @@ const chart = new Chart(ctx, {
         },
         elements: {
             point: {
-                radius: 0 // Hide points on the line dataset
+                radius: 0
             }
         }
     }
@@ -141,6 +146,9 @@ function connectWebSocket() {
     socket.onopen = function() {
         connectionStatus.innerHTML = '<span class="badge-ios">Connected</span>';
         clearFirstLogItemIfDefault();
+        
+        // Load initial data
+        loadInitialData();
     };
     
     socket.onclose = function() {
@@ -154,54 +162,188 @@ function connectWebSocket() {
         console.error('WebSocket error:', error);
         connectionStatus.innerHTML = '<span class="badge-ios badge-warning">Connection Error</span>';
     };
-      socket.onmessage = function(event) {
+    
+    socket.onmessage = function(event) {
         try {
             const data = JSON.parse(event.data);
             console.log('Received data:', data);
             
-            // Update distance displays
-            if (data.entryDistance !== undefined) {
-                entryDistanceElement.textContent = data.entryDistance > 0 ? `${data.entryDistance} cm` : '-- cm';
-            }
-            if (data.exitDistance !== undefined) {
-                exitDistanceElement.textContent = data.exitDistance > 0 ? `${data.exitDistance} cm` : '-- cm';
+            // Handle different message types
+            if (data.type === 'occupancy_update') {
+                handleOccupancyUpdate(data);
+            } else if (data.type === 'sensor_measurements') {
+                updateSensorReadings(data);
+            } else if (data.type === 'sensor_data') {
+                // Initial data load
+                if (data.data) {
+                    updateDisplayFromData(data.data);
+                }
+            } else if (data.type === 'test_session_response') {
+                // Handle test session response
+                testSessionSpinner.classList.add('d-none');
+                testSessionBtn.disabled = false;
+                testSessionText.textContent = isTestSessionActive ? 'Stop Test Session' : 'Start Test Session';
+                testSessionBtn.classList.toggle('btn-primary', !isTestSessionActive);
+                testSessionBtn.classList.toggle('btn-warning', isTestSessionActive);
+                
+                if (data.success) {
+                    showToast('Success', `Test session ${isTestSessionActive ? 'started' : 'stopped'}`, 'success');
+                } else {
+                    showToast('Error', data.message || 'Failed to control test session', 'danger');
+                    isTestSessionActive = !isTestSessionActive; // Revert state
+                }
+            } else if (data.type === 'reset_occupancy_response') {
+                // Handle reset occupancy response
+                resetOccupancySpinner.classList.add('d-none');
+                resetOccupancyBtn.disabled = false;
+                
+                if (data.success) {
+                    // Update UI to reflect reset
+                    const prevCount = currentCount;
+                    currentCount = 0;
+                    animateValue(currentCountElement, prevCount, currentCount, 300);
+                    
+                    // Update chart
+                    const timeString = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'});
+                    updateChart(timeString, 'reset');
+                    
+                    showToast('Success', 'Occupancy count reset to zero', 'success');
+                } else {
+                    showToast('Error', data.message || 'Failed to reset occupancy count', 'danger');
+                }
             }
             
-            // Format timestamp for display
-            const timestamp = new Date(data.timestamp);
-            const timeString = timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'});
-            
-            // Process event data
-            if (data.event === 'entry') {
-                entryCount++;
-                // If the ESP8266 sends occupancy data, use it directly
-                const prevCount = currentCount;
-                currentCount = data.occupancy !== undefined ? data.occupancy : currentCount + 1;
-                updateChart(timeString, 'entry');
-                logEvent(timeString, `Entry detected (${data.entryDistance}cm → ${data.exitDistance}cm)`, 'entry');
-                
-                // Add animation effect to the counter
-                animateValue(entryCountElement, entryCount - 1, entryCount, 300);
-                animateValue(currentCountElement, prevCount, currentCount, 300);
-            } else if (data.event === 'exit') {
-                exitCount++;
-                const prevCount = currentCount;
-                // If the ESP8266 sends occupancy data, use it directly
-                currentCount = data.occupancy !== undefined ? data.occupancy : Math.max(0, currentCount - 1);
-                updateChart(timeString, 'exit');
-                logEvent(timeString, `Exit detected (${data.exitDistance}cm → ${data.entryDistance}cm)`, 'exit');
-                
-                // Add animation effect to the counter
-                animateValue(exitCountElement, exitCount - 1, exitCount, 300);
-                animateValue(currentCountElement, prevCount, currentCount, 300);
-            }
         } catch (err) {
             console.error('Error processing message:', err);
         }
     };
 }
 
-// Update chart with new data
+// Load initial data from API
+async function loadInitialData() {
+    try {
+        const response = await fetch('/api/status');
+        const result = await response.json();
+        
+        if (result.success) {
+            updateDisplayFromData(result.data);
+        }
+    } catch (error) {
+        console.error('Error loading initial data:', error);
+    }
+}
+
+// Update display from data object
+function updateDisplayFromData(data) {
+    currentCount = data.occupancy || 0;
+    currentCountElement.textContent = currentCount;
+    
+    if (data.entryDistance !== undefined && entryDistanceElement) {
+        entryDistanceElement.textContent = data.entryDistance > 0 ? `${data.entryDistance} cm` : '-- cm';
+    }
+    if (data.exitDistance !== undefined && exitDistanceElement) {
+        exitDistanceElement.textContent = data.exitDistance > 0 ? `${data.exitDistance} cm` : '-- cm';
+    }
+}
+
+// Handle occupancy updates from server
+function handleOccupancyUpdate(data) {
+    // Update distance displays
+    if (data.entryDistance !== undefined && entryDistanceElement) {
+        entryDistanceElement.textContent = data.entryDistance > 0 ? `${data.entryDistance} cm` : '-- cm';
+    }
+    if (data.exitDistance !== undefined && exitDistanceElement) {
+        exitDistanceElement.textContent = data.exitDistance > 0 ? `${data.exitDistance} cm` : '-- cm';
+    }
+    
+    // Format timestamp for display
+    const timestamp = new Date(data.timestamp);
+    const timeString = timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'});
+    
+    // Process event data
+    if (data.event === 'entry') {
+        entryCount++;
+        const prevCount = currentCount;
+        currentCount = data.occupancy;
+        updateChart(timeString, 'entry');
+        logEvent(timeString, `Entry detected (${data.entryDistance}cm → ${data.exitDistance}cm) - Server counted`, 'entry');
+        
+        // Add animation effect to the counter
+        animateValue(entryCountElement, entryCount - 1, entryCount, 300);
+        animateValue(currentCountElement, prevCount, currentCount, 300);
+    } else if (data.event === 'exit') {
+        exitCount++;
+        const prevCount = currentCount;
+        currentCount = data.occupancy;
+        updateChart(timeString, 'exit');
+        logEvent(timeString, `Exit detected (${data.exitDistance}cm → ${data.entryDistance}cm) - Server counted`, 'exit');
+        
+        // Add animation effect to the counter
+        animateValue(exitCountElement, exitCount - 1, exitCount, 300);
+        animateValue(currentCountElement, prevCount, currentCount, 300);
+    }
+}
+
+// Update sensor readings without affecting counts
+function updateSensorReadings(data) {
+    if (data.entryDistance !== undefined && entryDistanceElement) {
+        entryDistanceElement.textContent = data.entryDistance > 0 ? `${data.entryDistance} cm` : '-- cm';
+    }
+    if (data.exitDistance !== undefined && exitDistanceElement) {
+        exitDistanceElement.textContent = data.exitDistance > 0 ? `${data.exitDistance} cm` : '-- cm';
+    }
+}
+
+// Simple toast notification function
+function showToast(title, message, type = 'info') {
+    // Create toast container if it doesn't exist
+    let toastContainer = document.getElementById('toast-container');
+    if (!toastContainer) {
+        toastContainer = document.createElement('div');
+        toastContainer.id = 'toast-container';
+        toastContainer.className = 'position-fixed bottom-0 end-0 p-3';
+        toastContainer.style.zIndex = '11';
+        document.body.appendChild(toastContainer);
+    }
+    
+    // Create toast element
+    const toastId = `toast-${Date.now()}`;
+    const toast = document.createElement('div');
+    toast.className = `toast show bg-${type} text-white`;
+    toast.id = toastId;
+    toast.setAttribute('role', 'alert');
+    toast.setAttribute('aria-live', 'assertive');
+    toast.setAttribute('aria-atomic', 'true');
+    
+    // Toast content
+    toast.innerHTML = `
+        <div class="toast-header bg-${type} text-white">
+            <strong class="me-auto">${title}</strong>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+        <div class="toast-body">
+            ${message}
+        </div>
+    `;
+    
+    // Add to container
+    toastContainer.appendChild(toast);
+    
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+    }, 5000);
+    
+    // Add close button functionality
+    const closeBtn = toast.querySelector('.btn-close');
+    closeBtn.addEventListener('click', () => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+    });
+}
+
+// Modified updateChart function to handle reset events
 function updateChart(timeLabel, eventType) {
     // Keep only the latest 30 data points
     if (chart.data.labels.length >= 30) {
@@ -234,42 +376,15 @@ function updateChart(timeLabel, eventType) {
     chart.data.datasets[1].data.push(entryPoint);
     chart.data.datasets[2].data.push(exitPoint);
     
+    // Add special marker for reset events
+    if (eventType === 'reset') {
+        // Highlight reset events as both entry and exit points
+        chart.data.datasets[1].data[chart.data.datasets[1].data.length - 1] = currentCount;
+        chart.data.datasets[2].data[chart.data.datasets[2].data.length - 1] = currentCount;
+    }
+    
     // Update the chart with animation
     chart.update();
-}
-
-// Log an event to the event log
-function logEvent(time, message, type) {
-    clearFirstLogItemIfDefault();
-    
-    const logItem = document.createElement('div');
-    logItem.className = 'list-group-item d-flex justify-content-between align-items-center';
-    
-    const eventText = document.createElement('span');
-    eventText.className = `event-${type}`;
-    eventText.innerHTML = `<strong>${message}</strong>`;
-    
-    const timeText = document.createElement('small');
-    timeText.className = 'text-secondary';
-    timeText.textContent = time;
-    
-    logItem.appendChild(eventText);
-    logItem.appendChild(timeText);
-    
-    // Add to the top of the log with fade-in effect
-    logItem.style.opacity = '0';
-    eventLog.prepend(logItem);
-    
-    // Animate the new log item
-    setTimeout(() => {
-        logItem.style.transition = 'opacity 0.3s ease-in';
-        logItem.style.opacity = '1';
-    }, 10);
-    
-    // Limit log size
-    if (eventLog.children.length > 100) {
-        eventLog.removeChild(eventLog.lastChild);
-    }
 }
 
 // Clear the default "waiting for events" message
@@ -282,9 +397,6 @@ function clearFirstLogItemIfDefault() {
 // Animate value change for counters
 function animateValue(element, start, end, duration) {
     if (start === end) return;
-    
-    // Save current value for restoration if needed
-    const current = parseInt(element.textContent);
     
     // Add highlight effect
     element.style.transition = 'color 0.5s ease-in-out';
@@ -311,6 +423,54 @@ clearLogButton.addEventListener('click', function() {
     eventLog.appendChild(defaultMessage);
 });
 
+// Test session button handler
+testSessionBtn.addEventListener('click', function() {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+        showToast('Error', 'No connection to server', 'danger');
+        return;
+    }
+    
+    // Toggle test session state
+    isTestSessionActive = !isTestSessionActive;
+    
+    // Show spinner
+    testSessionSpinner.classList.remove('d-none');
+    testSessionBtn.disabled = true;
+    
+    // Send test session command to server
+    socket.send(JSON.stringify({
+        type: 'test_session_control',
+        action: isTestSessionActive ? 'start' : 'stop'
+    }));
+    
+    // Log the action
+    const timeString = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'});
+    logEvent(timeString, `Test session ${isTestSessionActive ? 'started' : 'stopped'}`, isTestSessionActive ? 'entry' : 'exit');
+});
+
+// Reset occupancy button handler
+resetOccupancyBtn.addEventListener('click', function() {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+        showToast('Error', 'No connection to server', 'danger');
+        return;
+    }
+    
+    if (confirm('Are you sure you want to reset the occupancy count to zero?')) {
+        // Show spinner
+        resetOccupancySpinner.classList.remove('d-none');
+        resetOccupancyBtn.disabled = true;
+        
+        // Send reset command to server
+        socket.send(JSON.stringify({
+            type: 'reset_occupancy'
+        }));
+        
+        // Log the action
+        const timeString = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'});
+        logEvent(timeString, 'Occupancy count manually reset to zero', 'exit');
+    }
+});
+
 // Start WebSocket connection when DOM is loaded
 document.addEventListener('DOMContentLoaded', connectWebSocket);
 
@@ -326,3 +486,34 @@ function handleResize() {
 
 window.addEventListener('resize', handleResize);
 handleResize(); // Initial call
+
+// Function to add entries to the event log
+function logEvent(time, message, eventType) {
+    // Clear the default "waiting for events" message if needed
+    clearFirstLogItemIfDefault();
+    
+    // Create the log entry
+    const logItem = document.createElement('div');
+    logItem.className = `list-group-item d-flex justify-content-between align-items-center ${eventType ? 'event-' + eventType : ''}`;
+    
+    // Create the content
+    const eventText = document.createElement('span');
+    eventText.innerHTML = message;
+    
+    // Create the timestamp
+    const timestamp = document.createElement('small');
+    timestamp.className = 'text-muted ms-2';
+    timestamp.textContent = time;
+    
+    // Add them to the log item
+    logItem.appendChild(eventText);
+    logItem.appendChild(timestamp);
+    
+    // Add to the event log at the top
+    eventLog.prepend(logItem);
+    
+    // Limit the number of log items (optional)
+    if (eventLog.children.length > 100) {
+        eventLog.removeChild(eventLog.lastChild);
+    }
+}
