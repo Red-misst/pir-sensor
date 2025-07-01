@@ -16,7 +16,7 @@ const int LED_PIN  = 14;    // D5 - LED control
 const int BUZZ_PIN = 12;    // D6 - Buzzer
 
 // Ultrasonic sensor parameters
-const int DETECTION_THRESHOLD = 100;    // Distance in cm to detect person
+const int DETECTION_THRESHOLD = 50;    // Distance in cm to detect person
 const int MIN_DISTANCE = 5;             // Minimum valid distance reading
 const int MAX_DISTANCE = 200;           // Maximum valid distance reading
 
@@ -227,10 +227,12 @@ void handleDetection() {
 }
 
 // — Wi-Fi & WebSocket setup —
-const char* ssid = "Tenda_5C30C8";
-const char* password = "op898989..";
-const char* ws_server = "192.168.0.109";
-const uint16_t ws_port = 3000;
+const char* ssid = "Kandie";
+const char* password = "kandie35";
+
+// WebSocket server details
+const char* ws_server = "pir-sensor.onrender.com";  // New server URL without https:// prefix
+const uint16_t ws_port = 443;  // Default HTTPS/WSS port
 
 void connectToWiFi() {
   Serial.print("Connecting to WiFi");
@@ -279,9 +281,9 @@ void connectToWebSocket() {
   
   client.onEvent(onEventsCallback);
   client.onMessage(onMessageCallback);
-  client.setTimeout(10000);
+
   
-  String url = String("ws://") + ws_server + ":" + String(ws_port) + "/?type=esp8266&id=proximity_sensor_01";
+  String url = String("wss://") + ws_server + ":" + String(ws_port) + "/?type=esp8266&id=proximity_sensor_01";
   
   Serial.print("Connecting to: ");
   Serial.println(url);

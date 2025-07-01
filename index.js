@@ -11,7 +11,15 @@ const app = express();
 const server = http.createServer(app);
 
 // Create WebSocket server
-const wss = new WebSocket.Server({ server, path: '/' });
+const wss = new WebSocket.Server({ 
+  server, 
+  path: '/',
+  // Add WebSocket server options for better stability
+  clientTracking: true,
+  // Increase timeout values
+  pingTimeout: 60000,
+  pingInterval: 25000
+});
 
 // Port configuration
 const PORT = process.env.PORT || 3000;
@@ -248,7 +256,20 @@ wss.on('connection', (ws, req) => {
   // Set up ping interval
   const pingInterval = setInterval(() => {
     if (ws.readyState === WebSocket.OPEN) {
-      ws.ping();
+      // Check if client hasn't responded for too long
+      if (Date.now() - ws.lastHeartbeat > 90000) {
+        clearInterval(pingInterval);
+        return ws.terminate();
+      }
+      
+      // Send ping
+      try {
+        ws.ping();
+      } catch (err) {
+        // Handle ping error
+        console.error('Error sending ping:', err);
+        ws.terminate();
+      }
     }
   }, 30000);
 
@@ -269,6 +290,10 @@ wss.on('connection', (ws, req) => {
     clients.sensors.set(deviceId, ws);
     console.log(`ESP8266 ${deviceId} connected. Total ESP8266 devices: ${clients.esp8266.size}`);
   }
+
+  // Set last heartbeat time
+  ws.isAlive = true;
+  ws.lastHeartbeat = Date.now();
 
   // Handle incoming messages
   ws.on('message', async (message) => {
@@ -433,7 +458,9 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('pong', () => {
-    // Connection is alive
+    ws.isAlive = true;
+    ws.lastHeartbeat = Date.now();
+    console.log(`Received pong from ${clientType} client`);
   });
 });
 
