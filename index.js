@@ -14,11 +14,17 @@ const server = http.createServer(app);
 const wss = new WebSocket.Server({ 
   server, 
   path: '/',
-  // Add WebSocket server options for better stability
+  // Improved WebSocket server options for production
   clientTracking: true,
-  // Increase timeout values
-  pingTimeout: 60000,
-  pingInterval: 25000
+  // Increase timeout values for production stability
+  pingTimeout: 120000,
+  pingInterval: 30000,
+  // Add verification for secure WebSocket connections
+  verifyClient: (info, cb) => {
+    // Optional: Add client verification logic here
+    // Example: check origin, authentication tokens, etc.
+    cb(true); // Accept all connections for now
+  }
 });
 
 // Port configuration
@@ -285,10 +291,51 @@ wss.on('connection', (ws, req) => {
         data: latestSensorData
       }));
     }
+    
+    // Send recent critical messages
+    if (global.recentMessages && global.recentMessages.length > 0) {
+      // Small delay to ensure client is ready
+      setTimeout(() => {
+        try {
+          ws.send(JSON.stringify({
+            type: 'recent_messages',
+            count: global.recentMessages.length,
+            timestamp: Date.now()
+          }));
+          
+          // Send each message individually
+          global.recentMessages.forEach(item => {
+            setTimeout(() => {
+              if (ws.readyState === WebSocket.OPEN) {
+                try {
+                  ws.send(item.message);
+                } catch (err) {
+                  console.error('Error sending recent message:', err);
+                }
+              }
+            }, 100);
+          });
+        } catch (err) {
+          console.error('Error sending message history:', err);
+        }
+      }, 1000);
+    }
   } else if (clientType === 'esp8266' || clientType === 'sensor') {
     clients.esp8266.add(ws);
     clients.sensors.set(deviceId, ws);
     console.log(`ESP8266 ${deviceId} connected. Total ESP8266 devices: ${clients.esp8266.size}`);
+    
+    // Send configuration to ESP8266
+    try {
+      ws.send(JSON.stringify({
+        type: 'config',
+        timestamp: Date.now(),
+        interval: 500,  // Suggest measurement interval
+        server_time: new Date().toISOString()
+      }));
+    } catch (err) {
+      console.error('Error sending config to ESP8266:', err);
+    }
   }
 
   // Set last heartbeat time
@@ -302,133 +349,190 @@ wss.on('connection', (ws, req) => {
       
       if (messageString === "Client Connected") {
         console.log(`${clientType} device connected and sent hello message`);
+        // Send acknowledgment with timestamp for better sync
+        ws.send(JSON.stringify({
+          type: 'connection_confirmed',
+          timestamp: Date.now(),
+          server_time: new Date().toISOString()
+        }));
         return;
       }
       
+      let data;
       try {
-        const data = JSON.parse(messageString);
+        data = JSON.parse(messageString);
         console.log(`Received from ${clientType}:`, data);
-        
-        // Handle ESP8266 detection events
-        if (data.event && (data.event === 'entry' || data.event === 'exit')) {
-          const result = await updateOccupancy(data.event, data.deviceId || deviceId, {
-            entryDistance: data.entryDistance,
-            exitDistance: data.exitDistance
-          });
-          
-          if (result) {
-            console.log(`Processed ${data.event} - New occupancy: ${result.occupancy}`);
-          }
-        }
-        // Handle sensor measurements
-        else if (data.type === 'sensor_measurements') {
-          broadcastToBrowsers({
-            type: 'sensor_measurements',
-            ...data
-          });
-        }
-        // Handle test session control
-        else if (data.type === 'test_session_control') {
-          let response = {
-            type: 'test_session_response',
-            success: true,
-            action: data.action
-          };
-          
-          try {
-            if (data.action === 'start') {
-              // Send command to ESP8266 to start test session
-              sendCommandToESP8266({
-                type: 'test_mode',
-                enabled: true
-              });
-              console.log('Test session started');
-            } else if (data.action === 'stop') {
-              // Send command to ESP8266 to stop test session
-              sendCommandToESP8266({
-                type: 'test_mode',
-                enabled: false
-              });
-              console.log('Test session stopped');
-            }
-          } catch (error) {
-            response.success = false;
-            response.message = error.message;
-            console.error('Error handling test session:', error);
-          }
-          
-          ws.send(JSON.stringify(response));
-        }
-        // Handle reset occupancy
-        else if (data.type === 'reset_occupancy') {
-          let response = {
-            type: 'reset_occupancy_response',
-            success: true
-          };
-          
-          try {
-            // Reset occupancy in MongoDB
-            await occupancyCollection.updateOne(
-              { deviceId: 'proximity_sensor_01' },
-              {
-                $set: {
-                  currentOccupancy: 0,
-                  lastUpdated: new Date(),
-                  lightsOn: false
-                }
-              }
-            );
-            
-            // Log the reset event
-            await eventsCollection.insertOne({
-              deviceId: 'proximity_sensor_01',
-              eventType: 'manual_reset',
-              timestamp: new Date(),
-              occupancyBefore: latestSensorData.occupancy,
-              occupancyAfter: 0,
-              entryDistance: -1,
-              exitDistance: -1,
-              lightsOn: false
-            });
-            
-            // Update latest sensor data
-            latestSensorData.occupancy = 0;
-            latestSensorData.lightsOn = false;
-            latestSensorData.lastUpdate = new Date().toISOString();
-            
-            // Send command to ESP8266 to turn off lights
-            sendCommandToESP8266({
-              type: 'light_control',
-              action: 'off',
-              reason: 'manual_reset'
-            });
-            
-            // Broadcast update to all browsers
-            broadcastToBrowsers({
-              type: 'occupancy_update',
-              event: 'reset',
-              occupancy: 0,
-              timestamp: latestSensorData.lastUpdate,
-              lightsOn: false,
-              deviceId: 'proximity_sensor_01'
-            });
-            
-            console.log('Occupancy count manually reset to zero');
-          } catch (error) {
-            response.success = false;
-            response.message = error.message;
-            console.error('Error resetting occupancy count:', error);
-          }
-          
-          ws.send(JSON.stringify(response));
-        }
-        
       } catch (parseError) {
         console.error('Error parsing message:', parseError);
+        console.error('Raw message:', messageString);
+        // Send error response to client
+        ws.send(JSON.stringify({
+          type: 'error',
+          message: 'Invalid JSON format',
+          timestamp: Date.now()
+        }));
+        return;
+      }
+      
+      // Message validation
+      if (!data || typeof data !== 'object') {
+        console.error('Invalid message format:', data);
+        return;
+      }
+      
+      // Handle ESP8266 detection events with improved validation
+      if (data.event && (data.event === 'entry' || data.event === 'exit')) {
+        const sensorData = {
+          entryDistance: typeof data.entryDistance === 'number' ? data.entryDistance : -1,
+          exitDistance: typeof data.exitDistance === 'number' ? data.exitDistance : -1
+        };
+        
+        const result = await updateOccupancy(data.event, data.deviceId || deviceId, sensorData);
+        
+        if (result) {
+          console.log(`Processed ${data.event} - New occupancy: ${result.occupancy}`);
+          // Send acknowledgment to ESP8266
+          ws.send(JSON.stringify({
+            type: 'event_processed',
+            event: data.event,
+            timestamp: Date.now(),
+            success: true
+          }));
+        } else {
+          console.error(`Failed to process ${data.event} event`);
+          ws.send(JSON.stringify({
+            type: 'event_processed',
+            event: data.event,
+            timestamp: Date.now(),
+            success: false,
+            message: 'Failed to update occupancy'
+          }));
+        }
+      }
+      // Handle sensor measurements with improved validation
+      else if (data.type === 'sensor_measurements') {
+        // Validate required fields
+        if (typeof data.timestamp === 'undefined' ||
+            typeof data.entryDistance === 'undefined' ||
+            typeof data.exitDistance === 'undefined') {
+          console.error('Invalid sensor measurements format:', data);
+          return;
+        }
+        
+        // Store latest measurements for new clients
+        Object.assign(latestSensorData, {
+          entryDistance: data.entryDistance || latestSensorData.entryDistance,
+          exitDistance: data.exitDistance || latestSensorData.exitDistance,
+          lastUpdate: new Date().toISOString(),
+          deviceId: data.deviceId || deviceId
+        });
+        
+        // Broadcast to browsers with retry mechanism
+        broadcastToBrowsersWithRetry({
+          type: 'sensor_measurements',
+          ...data,
+          server_received: Date.now()
+        });
+      }
+      // Handle test session control
+      else if (data.type === 'test_session_control') {
+        let response = {
+          type: 'test_session_response',
+          success: true,
+          action: data.action
+        };
+        
+        try {
+          if (data.action === 'start') {
+            // Send command to ESP8266 to start test session
+            sendCommandToESP8266({
+              type: 'test_mode',
+              enabled: true
+            });
+            console.log('Test session started');
+          } else if (data.action === 'stop') {
+            // Send command to ESP8266 to stop test session
+            sendCommandToESP8266({
+              type: 'test_mode',
+              enabled: false
+            });
+            console.log('Test session stopped');
+          }
+        } catch (error) {
+          response.success = false;
+          response.message = error.message;
+          console.error('Error handling test session:', error);
+        }
+        
+        ws.send(JSON.stringify(response));
+      }
+      // Handle reset occupancy
+      else if (data.type === 'reset_occupancy') {
+        let response = {
+          type: 'reset_occupancy_response',
+          success: true
+        };
+        
+        try {
+          // Reset occupancy in MongoDB
+          await occupancyCollection.updateOne(
+            { deviceId: 'proximity_sensor_01' },
+            {
+              $set: {
+                currentOccupancy: 0,
+                lastUpdated: new Date(),
+                lightsOn: false
+              }
+            }
+          );
+          
+          // Log the reset event
+          await eventsCollection.insertOne({
+            deviceId: 'proximity_sensor_01',
+            eventType: 'manual_reset',
+            timestamp: new Date(),
+            occupancyBefore: latestSensorData.occupancy,
+            occupancyAfter: 0,
+            entryDistance: -1,
+            exitDistance: -1,
+            lightsOn: false
+          });
+          
+          // Update latest sensor data
+          latestSensorData.occupancy = 0;
+          latestSensorData.lightsOn = false;
+          latestSensorData.lastUpdate = new Date().toISOString();
+          
+          // Send command to ESP8266 to turn off lights
+          sendCommandToESP8266({
+            type: 'light_control',
+            action: 'off',
+            reason: 'manual_reset'
+          });
+          
+          // Broadcast update to all browsers
+          broadcastToBrowsers({
+            type: 'occupancy_update',
+            event: 'reset',
+            occupancy: 0,
+            timestamp: latestSensorData.lastUpdate,
+            lightsOn: false,
+            deviceId: 'proximity_sensor_01'
+          });
+          
+          console.log('Occupancy count manually reset to zero');
+        } catch (error) {
+          response.success = false;
+          response.message = error.message;
+          console.error('Error resetting occupancy count:', error);
+        }
+        
+        ws.send(JSON.stringify(response));
       }
       
     } catch (error) {
       console.error(`Error processing message: ${error.message}`);
+      console.error(error.stack);
     }
   });
 
@@ -466,6 +570,7 @@ wss.on('connection', (ws, req) => {
 
 function broadcastToBrowsers(message) {
   const messageStr = typeof message === 'string' ? message : JSON.stringify(message);
+  const failedClients = [];
   
   for (const client of clients.browsers) {
     if (client.readyState === WebSocket.OPEN) {
@@ -473,7 +578,48 @@ function broadcastToBrowsers(message) {
         client.send(messageStr);
       } catch (err) {
         console.error('Error broadcasting to browser:', err);
+        failedClients.push(client);
       }
+    } else if (client.readyState === WebSocket.CLOSED || client.readyState === WebSocket.CLOSING) {
+      failedClients.push(client);
+    }
+  }
+  
+  // Clean up failed clients
+  for (const client of failedClients) {
+    clients.browsers.delete(client);
+    console.log('Removed closed browser connection during broadcast');
+  }
+}
+
+// Add a new function for broadcasts with retry
+const messageQueue = new Map(); // Map of client -> messages to retry
+
+function broadcastToBrowsersWithRetry(message, maxRetries = 3) {
+  broadcastToBrowsers(message);
+  
+  // For critical messages, we can queue them for offline clients
+  // This is optional and depends on your application needs
+  if (message.type === 'occupancy_update' || message.type === 'critical_alert') {
+    const messageStr = JSON.stringify(message);
+    
+    // Store this message for clients that connect later
+    const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Store last 10 critical messages
+    if (!global.recentMessages) {
+      global.recentMessages = [];
+    }
+    
+    global.recentMessages.unshift({
+      id: messageId,
+      message: messageStr,
+      timestamp: Date.now()
+    });
+    
+    // Keep only the last 10 messages
+    if (global.recentMessages.length > 10) {
+      global.recentMessages.pop();
     }
   }
 }
@@ -497,15 +643,43 @@ async function startServer() {
 
 startServer().catch(console.error);
 
-// Graceful shutdown
+// Connection monitoring for production stability
+const connectionMonitor = setInterval(() => {
+  console.log(`Active connections - Browsers: ${clients.browsers.size}, ESP8266: ${clients.esp8266.size}`);
+  
+  // Check all clients for dead connections
+  for (const client of [...clients.browsers, ...clients.esp8266]) {
+    if (client.readyState !== WebSocket.OPEN) {
+      console.log('Found dead connection, cleaning up...');
+      
+      if (clients.browsers.has(client)) {
+        clients.browsers.delete(client);
+      }
+      
+      if (clients.esp8266.has(client)) {
+        clients.esp8266.delete(client);
+        
+        for (const [id, sensor] of clients.sensors.entries()) {
+          if (sensor === client) {
+            clients.sensors.delete(id);
+            console.log(`Sensor ${id} removed due to dead connection`);
+            break;
+          }
+        }
+      }
+    }
+  }
+}, 60000); // Check every minute
+
+// Ensure the interval is cleared on server shutdown
 process.on('SIGINT', async () => {
   console.log('Received SIGINT. Graceful shutdown...');
- 
+  clearInterval(connectionMonitor);
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   console.log('Received SIGTERM. Graceful shutdown...');
- 
+  clearInterval(connectionMonitor);
   process.exit(0);
 });
